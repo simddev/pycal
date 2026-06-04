@@ -65,11 +65,12 @@ def find_notes(query=None):
     try:
         for p in NOTES.glob("????-??-??.txt"):
             try:
+                with p.open("rb") as f:
+                    content = f.read(_NOTE_BYTES).decode("utf-8", errors="replace")
                 if q is not None:
-                    with p.open("rb") as f:
-                        if q not in f.read(_NOTE_BYTES).decode("utf-8", errors="replace").lower():
-                            continue
-                elif p.stat().st_size == 0:
+                    if q not in content.lower():
+                        continue
+                elif not content.strip():
                     continue
                 results.append(datetime.date.fromisoformat(p.stem))
             except (OSError, ValueError):
@@ -184,7 +185,7 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
         if ch == 27:                                     # ESC → save & exit
             break
         elif ch in (10, 13):                             # Enter → newline
-            if ri < max_rows - 1:
+            if ri < max_rows - 1 and len(buf) < NOTE_MAX:
                 buf.insert(pos, "\n"); pos += 1
             else:
                 curses.beep()
