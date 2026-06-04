@@ -16,12 +16,13 @@ Notes stored in $XDG_DATA_HOME/cal-notes/YYYY-MM-DD.txt
 import curses, calendar, datetime, os, signal, sys
 from pathlib import Path
 
-_DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-NOTES      = _DATA_HOME / "cal-notes"
-NOTE_MAX   = 500
-_CAL       = calendar.Calendar(firstweekday=0)
-_DAYS      = list(calendar.day_abbr)   # locale-aware, 0=Mon … 6=Sun
-_EMPTY     = ("", ())   # sentinel for days with no note
+_DATA_HOME  = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+NOTES       = _DATA_HOME / "cal-notes"
+NOTE_MAX    = 500
+_NOTE_BYTES = NOTE_MAX * 4          # 4 bytes/char worst-case UTF-8
+_CAL        = calendar.Calendar(firstweekday=0)
+_DAYS       = calendar.day_abbr     # locale-aware, 0=Mon … 6=Sun
+_EMPTY      = ("", ())              # sentinel for days with no note
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
@@ -30,7 +31,7 @@ def note_path(d): return NOTES / f"{d:%Y-%m-%d}.txt"
 def get_note(d):
     try:
         with note_path(d).open("rb") as f:
-            raw = f.read(NOTE_MAX * 4)   # 4 bytes/char worst-case UTF-8
+            raw = f.read(_NOTE_BYTES)
         return raw.decode("utf-8", errors="replace").strip()[:NOTE_MAX]
     except OSError:
         return ""
@@ -66,7 +67,7 @@ def find_notes(query=None):
             try:
                 if q is not None:
                     with p.open("rb") as f:
-                        if q not in f.read(NOTE_MAX * 4).decode("utf-8", errors="replace").lower():
+                        if q not in f.read(_NOTE_BYTES).decode("utf-8", errors="replace").lower():
                             continue
                 elif p.stat().st_size == 0:
                     continue
@@ -197,7 +198,7 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
         elif ch == curses.KEY_DOWN and ri < len(ls) - 1: pos = rc_to_pos(ri + 1, ci, ls)
         elif ch == curses.KEY_DC:                        # forward delete
             if pos < len(buf): buf.pop(pos)
-        elif ch == curses.KEY_RESIZE: pass               # terminal resized; next draw fixes layout
+        elif ch == curses.KEY_RESIZE: pass               # next draw fixes layout
         elif 32 <= ch < 256 and chr(ch).isprintable() and len(buf) < NOTE_MAX:
             buf.insert(pos, chr(ch)); pos += 1
 
@@ -216,7 +217,7 @@ def draw_vbars(scr, row, cw):
     for i in range(8):
         safe(scr, row, i * (cw + 1), "│", attr)
 
-def draw(scr, y, m, d, today, notes, weeks, status=""):
+def draw(scr, cur, today, notes, weeks, status=""):
     H, W = scr.getmaxyx()
 
     if H < 12 or W < 30:
@@ -224,17 +225,18 @@ def draw(scr, y, m, d, today, notes, weeks, status=""):
         safe(scr, H // 2, max(0, (W - 20) // 2),
              "terminal too small", curses.A_DIM)
         scr.refresh()
-        return 0, datetime.date(y, m, d), H
+        return 0, H
 
     cw      = max(5, (W - 8) // 7)
     NOTE_H  = max(3, H // 7)
     SEP_ROW = H - NOTE_H - 1
     CAL_H   = SEP_ROW
+    m       = cur.month
 
     scr.erase()
 
     # ── Month header ──────────────────────────────────────────────────────────
-    hdr = f"  ◄  {datetime.date(y, m, 1).strftime('%B %Y')}  ►  "
+    hdr = f"  ◄  {cur.strftime('%B %Y')}  ►  "
     safe(scr, 1, max(0, (W - len(hdr)) // 2), hdr,
          curses.color_pair(1) | curses.A_BOLD)
 
@@ -250,9 +252,8 @@ def draw(scr, y, m, d, today, notes, weeks, status=""):
 
     draw_hline(scr, 5, "├", "┼", "┤", "─", cw)
 
-    sel_date = datetime.date(y, m, d)
-    avail    = CAL_H - 6 - len(weeks)
-    row_h    = max(2, avail // len(weeks))
+    avail = CAL_H - 6 - len(weeks)
+    row_h = max(2, avail // len(weeks))
 
     # ── Calendar weeks ────────────────────────────────────────────────────────
     for wi, week in enumerate(weeks):
@@ -269,7 +270,7 @@ def draw(scr, y, m, d, today, notes, weeks, status=""):
             in_month = (dt.month == m)
             raw, lns = notes.get(dt, _EMPTY)
 
-            if   dt == sel_date:  attr = curses.color_pair(3) | curses.A_BOLD
+            if   dt == cur:       attr = curses.color_pair(3) | curses.A_BOLD
             elif dt == today:     attr = curses.color_pair(2) | curses.A_BOLD
             elif not in_month:    attr = curses.color_pair(5) | curses.A_DIM
             elif di >= 5:         attr = curses.color_pair(4)
@@ -294,12 +295,12 @@ def draw(scr, y, m, d, today, notes, weeks, status=""):
                 draw_hline(scr, sep, "├", "┼", "┤", "─", cw)
 
     # ── Notes panel ───────────────────────────────────────────────────────────
-    raw, note_lines = notes.get(sel_date, _EMPTY)
+    raw, note_lines = notes.get(cur, _EMPTY)
     ny = SEP_ROW + 1
 
     safe(scr, SEP_ROW, 0, "─" * (W - 1), curses.color_pair(1))
 
-    bar = (f"  {sel_date.strftime('%a %d %b %Y')}"
+    bar = (f"  {cur.strftime('%a %d %b %Y')}"
            f"   a:edit  d:del  [:prev-mo  ]:next-mo"
            f"  n:next-note  p:prev-note  /:search  g:goto  t:today  r:refresh  q:quit")
     safe(scr, ny, 0, bar.ljust(W - 1), curses.color_pair(1))
@@ -315,7 +316,7 @@ def draw(scr, y, m, d, today, notes, weeks, status=""):
         safe(scr, ny + 1, 2, "no note  —  press [a] to add one", curses.A_DIM)
 
     scr.refresh()
-    return ny, sel_date, H
+    return ny, H
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -336,10 +337,10 @@ def main(scr):
     cur    = datetime.date.today()
     status = ""
 
-    _cache_key    = None
-    _cache_notes  = {}
-    _cache_weeks  = []
-    _noted_dates  = None    # sorted list of all dates with a note; None = stale
+    _cache_key   = None
+    _cache_notes = {}
+    _cache_weeks = []
+    _noted_dates = None    # sorted list of all dates with a note; None = stale
 
     def get_notes(y, m):
         nonlocal _cache_key, _cache_notes, _cache_weeks
@@ -385,26 +386,24 @@ def main(scr):
         if not dates:
             status = "no notes found"; return
         if forward:
-            nexts = [d for d in dates if d > sel_date]
+            nexts = [d for d in dates if d > cur]
             cur   = nexts[0] if nexts else dates[0]
             if not nexts: status = "wrapped to first note"
         else:
-            prevs = [d for d in dates if d < sel_date]
+            prevs = [d for d in dates if d < cur]
             cur   = prevs[-1] if prevs else dates[-1]
             if not prevs: status = "wrapped to last note"
 
     while True:
-        today = datetime.date.today()
-
-        y, m, d          = cur.year, cur.month, cur.day
-        notes, weeks     = get_notes(y, m)
-        ny, sel_date, H  = draw(scr, y, m, d, today, notes, weeks, status)
-        status           = ""
-        _, W             = scr.getmaxyx()
-        ch               = scr.getch()
+        today        = datetime.date.today()
+        notes, weeks = get_notes(cur.year, cur.month)
+        ny, H        = draw(scr, cur, today, notes, weeks, status)
+        status       = ""
+        _, W         = scr.getmaxyx()
+        ch           = scr.getch()
 
         if   ch in (ord('q'), ord('Q'), 27):          break
-        elif ch == curses.KEY_RESIZE:                  pass   # next draw picks up new size
+        elif ch == curses.KEY_RESIZE:                  pass
         elif ch in (curses.KEY_LEFT,  ord('h')):       move(-1)
         elif ch in (curses.KEY_RIGHT, ord('l')):       move(+1)
         elif ch in (curses.KEY_UP,    ord('k')):       move(-7)
@@ -420,7 +419,7 @@ def main(scr):
             if query:
                 results = find_notes(query)
                 if results:
-                    nexts  = [d for d in results if d >= sel_date]
+                    nexts  = [d for d in results if d >= cur]
                     cur    = nexts[0] if nexts else results[0]
                     n      = len(results)
                     status = f"{n} match{'es' if n != 1 else ''} for '{query}'"
@@ -429,25 +428,25 @@ def main(scr):
         elif ch in (ord('g'), ord('G')):
             ds = prompt_line(scr, ny, W, "  go to (DD  DD/MM  YYYY-MM-DD): ")
             if ds and ds.strip():
-                parsed = parse_date(ds, y, m)
+                parsed = parse_date(ds, cur.year, cur.month)
                 if parsed:
                     cur = parsed
                 else:
                     status = f"invalid date: '{ds}'"
         elif ch in (ord('d'), ord('D')):
-            err = save_note(sel_date, "")
+            err = save_note(cur, "")
             if err: status = f"delete failed: {err}"
             else:   invalidate()
         elif ch in (ord('a'), ord('A'), 10, 13):
             max_rows  = max(1, H - ny - 1)
-            hint_base = (f"  {sel_date.strftime('%a %d %b %Y')}"
+            hint_base = (f"  {cur.strftime('%a %d %b %Y')}"
                          f"   Enter:new-line   ESC:save")
             safe(scr, ny, 0, hint_base.ljust(W - 1), curses.color_pair(1))
-            prefill, _ = notes.get(sel_date, _EMPTY)
+            prefill, _ = notes.get(cur, _EMPTY)
             new        = input_note(scr, ny + 1, 2, W - 3, max_rows,
                                     prefill, hint_row=ny, hint_base=hint_base)
             if new.strip() != prefill:
-                err = save_note(sel_date, new)
+                err = save_note(cur, new)
                 if err: status = f"save failed: {err}"
                 else:   invalidate()
 
