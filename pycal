@@ -130,13 +130,13 @@ def prompt_line(scr, row, W, label):
         except curses.error: pass
         scr.refresh()
         ch = scr.get_wch()
-        if   ch in (10, 13):  curses.curs_set(0); return "".join(buf)
-        elif ch == 27:        curses.curs_set(0); return None
+        if   ch in (10, 13, "\n", "\r"):  curses.curs_set(0); return "".join(buf)
+        elif ch in (27, "\x1b"):          curses.curs_set(0); return None
         elif ch == curses.KEY_RESIZE:
             _, W = scr.getmaxyx(); iw = max(1, W - x0 - 2)
             if len(buf) > iw: del buf[iw:]; pos = min(pos, len(buf))
             safe(scr, row, 0, label.ljust(W - 1), curses.color_pair(1))
-        elif ch in (curses.KEY_BACKSPACE, 127, 8):
+        elif ch in (curses.KEY_BACKSPACE, 127, 8, "\x7f", "\x08"):
             if pos: buf.pop(pos - 1); pos -= 1
         elif ch == curses.KEY_HOME:                      pos = 0
         elif ch == curses.KEY_END:                       pos = len(buf)
@@ -187,14 +187,14 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
         scr.refresh()
 
         ch = scr.get_wch()
-        if ch == 27:                                     # ESC → save & exit
+        if ch in (27, "\x1b"):                           # ESC → save & exit
             break
-        elif ch in (10, 13):                             # Enter → newline
+        elif ch in (10, 13, "\n", "\r"):                 # Enter → newline
             if ri < max_rows - 1 and len(buf) < NOTE_MAX:
                 buf.insert(pos, "\n"); pos += 1
             else:
                 curses.beep()
-        elif ch in (curses.KEY_BACKSPACE, 127, 8):
+        elif ch in (curses.KEY_BACKSPACE, 127, 8, "\x7f", "\x08"):
             if pos: buf.pop(pos - 1); pos -= 1
         elif ch == curses.KEY_LEFT and pos:              pos -= 1
         elif ch == curses.KEY_RIGHT and pos < len(buf):  pos += 1
