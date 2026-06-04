@@ -103,10 +103,15 @@ def safe(scr, row, col, s, attr=0):
     H, W = scr.getmaxyx()
     if row < 0 or row >= H or col < 0 or col >= W:
         return
-    s = s[:W - col - 1]
+    s = s[:W - col]
     if not s: return
     try:
-        scr.addstr(row, col, s, attr)
+        if col + len(s) < W:
+            scr.addstr(row, col, s, attr)
+        else:
+            if len(s) > 1:
+                scr.addstr(row, col, s[:-1], attr)
+            scr.insch(row, W - 1, s[-1], attr)
     except curses.error:
         pass
 
@@ -208,15 +213,15 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
 
 # ── Drawing ───────────────────────────────────────────────────────────────────
 
-def draw_hline(scr, row, lc, mc, rc, fill, cw):
+def draw_hline(scr, row, x0, lc, mc, rc, fill, cw):
     if row < 0 or row >= scr.getmaxyx()[0]: return
     s = lc + (fill * cw + mc) * 6 + fill * cw + rc
-    safe(scr, row, 0, s, curses.color_pair(5) | curses.A_DIM)
+    safe(scr, row, x0, s, curses.color_pair(5) | curses.A_DIM)
 
-def draw_vbars(scr, row, cw):
+def draw_vbars(scr, row, x0, cw):
     attr = curses.color_pair(5) | curses.A_DIM
     for i in range(8):
-        safe(scr, row, i * (cw + 1), "│", attr)
+        safe(scr, row, x0 + i * (cw + 1), "│", attr)
 
 def draw(scr, cur, today, notes, weeks, status=""):
     H, W = scr.getmaxyx()
@@ -229,6 +234,8 @@ def draw(scr, cur, today, notes, weeks, status=""):
         return 0, H
 
     cw      = max(5, (W - 8) // 7)
+    gw      = 7 * (cw + 1) + 1
+    x0      = max(0, (W - gw) // 2)
     NOTE_H  = max(3, H // 7)
     SEP_ROW = H - NOTE_H - 1
     CAL_H   = SEP_ROW
@@ -241,17 +248,17 @@ def draw(scr, cur, today, notes, weeks, status=""):
     safe(scr, 1, max(0, (W - len(hdr)) // 2), hdr,
          curses.color_pair(1) | curses.A_BOLD)
 
-    draw_hline(scr, 3, "┌", "┬", "┐", "─", cw)
+    draw_hline(scr, 3, x0, "┌", "┬", "┐", "─", cw)
 
     # ── Day-of-week header ────────────────────────────────────────────────────
-    draw_vbars(scr, 4, cw)
+    draw_vbars(scr, 4, x0, cw)
     for i, dn in enumerate(_DAYS):
-        x    = 1 + i * (cw + 1) + (cw - len(dn)) // 2
+        x    = x0 + 1 + i * (cw + 1) + (cw - len(dn)) // 2
         attr = (curses.color_pair(4) | curses.A_BOLD) if i >= 5 \
                else (curses.color_pair(1) | curses.A_BOLD)
         safe(scr, 4, x, dn, attr)
 
-    draw_hline(scr, 5, "├", "┼", "┤", "─", cw)
+    draw_hline(scr, 5, x0, "├", "┼", "┤", "─", cw)
 
     avail = CAL_H - 6 - len(weeks)
     row_h = max(2, avail // len(weeks))
@@ -264,10 +271,10 @@ def draw(scr, cur, today, notes, weeks, status=""):
 
         for r in range(row_h):
             if base + r < CAL_H:
-                draw_vbars(scr, base + r, cw)
+                draw_vbars(scr, base + r, x0, cw)
 
         for di, dt in enumerate(week):
-            x        = 1 + di * (cw + 1)
+            x        = x0 + 1 + di * (cw + 1)
             in_month = (dt.month == m)
             raw, lns = notes.get(dt, _EMPTY)
 
@@ -291,9 +298,9 @@ def draw(scr, cur, today, notes, weeks, status=""):
         sep = base + row_h
         if sep < CAL_H:
             if wi == len(weeks) - 1:
-                draw_hline(scr, sep, "└", "┴", "┘", "─", cw)
+                draw_hline(scr, sep, x0, "└", "┴", "┘", "─", cw)
             else:
-                draw_hline(scr, sep, "├", "┼", "┤", "─", cw)
+                draw_hline(scr, sep, x0, "├", "┼", "┤", "─", cw)
 
     # ── Notes panel ───────────────────────────────────────────────────────────
     raw, note_lines = notes.get(cur, _EMPTY)
