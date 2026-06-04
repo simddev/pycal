@@ -42,7 +42,7 @@ def save_note(d, t):
         p = note_path(d)
         if text:
             NOTES.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_name(f".{p.name}.tmp")
+            tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
             try:
                 tmp.write_text(text + "\n", encoding="utf-8")
                 tmp.replace(p)
@@ -123,7 +123,7 @@ def prompt_line(scr, row, W, label):
             scr.move(row, x0 + min(pos, iw - 1))
         except curses.error: pass
         scr.refresh()
-        ch = scr.getch()
+        ch = scr.get_wch()
         if   ch in (10, 13):  curses.curs_set(0); return "".join(buf)
         elif ch == 27:        curses.curs_set(0); return None
         elif ch == curses.KEY_RESIZE:
@@ -136,8 +136,8 @@ def prompt_line(scr, row, W, label):
         elif ch == curses.KEY_END:                       pos = len(buf)
         elif ch == curses.KEY_LEFT and pos:              pos -= 1
         elif ch == curses.KEY_RIGHT and pos < len(buf):  pos += 1
-        elif 32 <= ch < 256 and chr(ch).isprintable() and len(buf) < iw:
-            buf.insert(pos, chr(ch)); pos += 1
+        elif isinstance(ch, str) and ch.isprintable() and len(buf) < iw:
+            buf.insert(pos, ch); pos += 1
 
 def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_base=""):
     """Multi-line inline note editor.  Enter = new line,  ESC = save."""
@@ -180,7 +180,7 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
         except curses.error: pass
         scr.refresh()
 
-        ch = scr.getch()
+        ch = scr.get_wch()
         if ch == 27:                                     # ESC → save & exit
             break
         elif ch in (10, 13):                             # Enter → newline
@@ -199,8 +199,8 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
         elif ch == curses.KEY_DC:                        # forward delete
             if pos < len(buf): buf.pop(pos)
         elif ch == curses.KEY_RESIZE: pass               # next draw fixes layout
-        elif 32 <= ch < 256 and chr(ch).isprintable() and len(buf) < NOTE_MAX:
-            buf.insert(pos, chr(ch)); pos += 1
+        elif isinstance(ch, str) and ch.isprintable() and len(buf) < NOTE_MAX:
+            buf.insert(pos, ch); pos += 1
 
     curses.curs_set(0)
     return "".join(buf)
@@ -416,7 +416,7 @@ def main(scr):
         elif ch in (ord('p'), ord('P')):               jump_to_note(forward=False)
         elif ch == ord('/'):
             query = prompt_line(scr, ny, W, "  search: ")
-            if query:
+            if query and query.strip():
                 results = find_notes(query)
                 if results:
                     nexts  = [d for d in results if d >= cur]
@@ -437,7 +437,7 @@ def main(scr):
             err = save_note(cur, "")
             if err: status = f"delete failed: {err}"
             else:   invalidate()
-        elif ch in (ord('a'), ord('A'), 10, 13):
+        elif ch in (ord('a'), ord('A'), 10, 13) and ny > 0:
             max_rows  = max(1, H - ny - 1)
             hint_base = (f"  {cur.strftime('%a %d %b %Y')}"
                          f"   Enter:new-line   ESC:save")
