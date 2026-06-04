@@ -130,7 +130,7 @@ def prompt_line(scr, row, W, label):
         except curses.error: pass
         scr.refresh()
         ch = scr.get_wch()
-        if   ch in (10, 13, "\n", "\r"):  curses.curs_set(0); return "".join(buf)
+        if   ch in (10, 13, "\n", "\r", curses.KEY_ENTER):  curses.curs_set(0); return "".join(buf)
         elif ch in (27, "\x1b"):          curses.curs_set(0); return None
         elif ch == curses.KEY_RESIZE:
             _, W = scr.getmaxyx(); iw = max(1, W - x0 - 2)
@@ -189,7 +189,7 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
         ch = scr.get_wch()
         if ch in (27, "\x1b"):                           # ESC → save & exit
             break
-        elif ch in (10, 13, "\n", "\r"):                 # Enter → newline
+        elif ch in (10, 13, "\n", "\r", curses.KEY_ENTER): # Enter → newline
             if ri < max_rows - 1 and len(buf) < NOTE_MAX:
                 buf.insert(pos, "\n"); pos += 1
             else:
@@ -445,7 +445,7 @@ def main(scr):
             err = save_note(cur, "")
             if err: status = f"delete failed: {err}"
             else:   invalidate()
-        elif ch in (ord('a'), ord('A'), 10, 13) and ny > 0:
+        elif ch in (ord('a'), ord('A'), 10, 13, curses.KEY_ENTER) and ny > 0:
             max_rows  = max(1, H - ny - 1)
             hint_base = (f"  {cur.strftime('%a %d %b %Y')}"
                          f"   Enter:new-line   ESC:save")
