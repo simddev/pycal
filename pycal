@@ -13,7 +13,7 @@
   q / ESC             — close
 Notes stored in $XDG_DATA_HOME/cal-notes/YYYY-MM-DD.txt
 """
-import curses, calendar, datetime, os, signal, sys
+import curses, calendar, datetime, locale, os, signal, sys
 from pathlib import Path
 
 _DATA_HOME  = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
@@ -331,15 +331,19 @@ def draw(scr, cur, today, notes, weeks, status=""):
 def main(scr):
     curses.curs_set(0)
     curses.start_color()
-    curses.use_default_colors()
+    try:
+        curses.use_default_colors()
+        bg = -1
+    except curses.error:
+        bg = curses.COLOR_BLACK
     BLUE = 69  if curses.COLORS >= 256 else curses.COLOR_BLUE
     PINK = 205 if curses.COLORS >= 256 else curses.COLOR_MAGENTA
-    curses.init_pair(1, BLUE,                  -1)
-    curses.init_pair(2, curses.COLOR_YELLOW,   -1)
+    curses.init_pair(1, BLUE,                  bg)
+    curses.init_pair(2, curses.COLOR_YELLOW,   bg)
     curses.init_pair(3, curses.COLOR_WHITE,    BLUE)
-    curses.init_pair(4, PINK,                  -1)
-    curses.init_pair(5, curses.COLOR_WHITE,    -1)
-    curses.init_pair(6, curses.COLOR_RED,      -1)
+    curses.init_pair(4, PINK,                  bg)
+    curses.init_pair(5, curses.COLOR_WHITE,    bg)
+    curses.init_pair(6, curses.COLOR_RED,      bg)
     scr.keypad(True)
 
     cur    = datetime.date.today()
@@ -465,4 +469,5 @@ def _sigterm(sig, frame):
 
 signal.signal(signal.SIGTERM, _sigterm)
 os.environ.setdefault("ESCDELAY", "25")
+locale.setlocale(locale.LC_ALL, '')
 curses.wrapper(main)
