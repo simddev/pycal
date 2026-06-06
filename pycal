@@ -6,6 +6,8 @@
   n / p               — jump to next / prev day with a note
   a / Enter           — edit note for selected day
   d                   — delete note for selected day
+  c                   — copy note for selected day
+  v                   — paste copied note
   /                   — search note content
   g                   — go to date
   t                   — jump to today
@@ -309,7 +311,7 @@ def draw(scr, cur, today, notes, weeks, status=""):
     safe(scr, SEP_ROW, 0, "─" * (W - 1), curses.color_pair(1))
 
     bar = (f"  {cur.strftime('%a %d %b %Y')}"
-           f"   a:edit  d:del  [:prev-mo  ]:next-mo"
+           f"   a:edit  d:del  c:copy  v:paste  [:prev-mo  ]:next-mo"
            f"  n:next-note  p:prev-note  /:search  g:goto  t:today  r:refresh  q:quit")
     safe(scr, ny, 0, bar.ljust(W - 1), curses.color_pair(1))
 
@@ -346,8 +348,9 @@ def main(scr):
     curses.init_pair(6, curses.COLOR_RED,      bg)
     scr.keypad(True)
 
-    cur    = datetime.date.today()
-    status = ""
+    cur        = datetime.date.today()
+    status     = ""
+    _clipboard = ""
 
     _cache_key   = None
     _cache_notes = {}
@@ -449,6 +452,20 @@ def main(scr):
             err = save_note(cur, "")
             if err: status = f"delete failed: {err}"
             else:   invalidate()
+        elif ch in (ord('c'), ord('C')):
+            raw, _ = notes.get(cur, _EMPTY)
+            if raw:
+                _clipboard = raw
+                status = "copied"
+            else:
+                status = "no note to copy"
+        elif ch in (ord('v'), ord('V')):
+            if _clipboard:
+                err = save_note(cur, _clipboard)
+                if err: status = f"paste failed: {err}"
+                else:   invalidate(); status = "pasted"
+            else:
+                status = "clipboard empty"
         elif ch in (ord('a'), ord('A'), 10, 13, curses.KEY_ENTER) and ny > 0:
             max_rows  = max(1, H - ny - 1)
             hint_base = (f"  {cur.strftime('%a %d %b %Y')}"

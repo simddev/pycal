@@ -41,6 +41,8 @@ pycal
 | `t` | jump to today |
 | `a` / `Enter` | edit note for selected day |
 | `d` | delete note |
+| `c` | copy note |
+| `v` | paste copied note |
 | `n` / `p` | jump to next / previous noted day |
 | `/` | search note content |
 | `g` | go to date |
