@@ -310,20 +310,22 @@ def draw(scr, cur, today, notes, weeks, status=""):
 
     safe(scr, SEP_ROW, 0, "─" * (W - 1), curses.color_pair(1))
 
-    bar = (f"  {cur.strftime('%a %d %b %Y')}"
-           f"   a:edit  d:del  c:copy  v:paste  [:prev-mo  ]:next-mo"
-           f"  n:next-note  p:prev-note  /:search  g:goto  t:today  r:refresh  q:quit")
-    safe(scr, ny, 0, bar.ljust(W - 1), curses.color_pair(1))
+    safe(scr, ny, 0,
+         f"  {cur.strftime('%a %d %b %Y')}".ljust(W - 1), curses.color_pair(1))
+    safe(scr, ny + 1, 0,
+         "  a:edit  d:del  c:copy  v:paste  [:prev-mo  ]:next-mo"
+         "  n:next-note  p:prev-note  /:search  g:goto  t:today  r:refresh  q:quit".ljust(W - 1),
+         curses.color_pair(1))
 
     if status:
-        safe(scr, ny + 1, 2, status[:W - 3], curses.color_pair(6))
+        safe(scr, ny + 2, 2, status[:W - 3], curses.color_pair(6))
     elif note_lines:
         for i, line in enumerate(note_lines):
-            row = ny + 1 + i
+            row = ny + 2 + i
             if row >= H: break
             safe(scr, row, 2, line[:W - 3], curses.A_BOLD)
     else:
-        safe(scr, ny + 1, 2, "no note  —  press [a] to add one", curses.A_DIM)
+        safe(scr, ny + 2, 2, "no note  —  press [a] to add one", curses.A_DIM)
 
     scr.refresh()
     return ny, H
@@ -467,12 +469,13 @@ def main(scr):
             else:
                 status = "clipboard empty"
         elif ch in (ord('a'), ord('A'), 10, 13, curses.KEY_ENTER) and ny > 0:
-            max_rows  = max(1, H - ny - 1)
+            max_rows  = max(1, H - ny - 2)
             hint_base = (f"  {cur.strftime('%a %d %b %Y')}"
                          f"   Enter:new-line   ESC:save")
-            safe(scr, ny, 0, hint_base.ljust(W - 1), curses.color_pair(1))
+            safe(scr, ny,     0, hint_base.ljust(W - 1), curses.color_pair(1))
+            safe(scr, ny + 1, 0, " " * (W - 1),          curses.color_pair(1))
             prefill, _ = notes.get(cur, _EMPTY)
-            new        = input_note(scr, ny + 1, 2, W - 3, max_rows,
+            new        = input_note(scr, ny + 2, 2, W - 3, max_rows,
                                     prefill, hint_row=ny, hint_base=hint_base)
             if new.strip() != prefill:
                 err = save_note(cur, new)
