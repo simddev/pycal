@@ -25,7 +25,7 @@ chmod +x pycal/pycal
 sudo ln -s "$PWD/pycal/pycal" /usr/local/bin/pycal   # optional
 ```
 
-No dependencies beyond Python 3.6+ stdlib.
+No dependencies beyond Python 3.7+ stdlib.
 
 ## usage
 
