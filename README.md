@@ -61,3 +61,8 @@ $XDG_DATA_HOME/cal-notes/YYYY-MM-DD.txt
 ```
 
 Max 500 characters per note. Deleting a note removes the file.
+
+
+
+Created by: Simon D.
+Contact: simon.d.dev@proton.me
