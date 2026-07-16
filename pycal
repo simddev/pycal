@@ -298,11 +298,11 @@ def draw(scr, cur, today, notes, weeks, status=""):
             elif di >= 5:         attr = curses.color_pair(4)
             else:                 attr = 0
 
-            safe(scr, base, x, f"{dt.day:2d}", attr)
+            safe(scr, base, x, f"-{dt.day:2d}-", attr)
 
             if raw:
                 note_attr = curses.A_DIM if in_month else (curses.color_pair(5) | curses.A_DIM)
-                safe(scr, base, x + 2, " ·", note_attr)
+                safe(scr, base, x + 4, "·", note_attr)
                 for ln_i, ln in enumerate(lns):
                     row = base + 1 + ln_i
                     if row >= base + row_h or row >= SEP_ROW:
