@@ -198,7 +198,8 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
         try:
             ch = scr.get_wch()
         except KeyboardInterrupt:
-            break
+            curs(0)
+            return prefill
         if ch in (27, "\x1b"):                            # ESC → save & exit
             break
         elif ch in (7, "\x07"):                           # Ctrl+G → discard
@@ -229,7 +230,6 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
 # ── Drawing ───────────────────────────────────────────────────────────────────
 
 def draw_hline(scr, row, x0, lc, mc, rc, fill, cw):
-    if row < 0 or row >= scr.getmaxyx()[0]: return
     s = lc + (fill * cw + mc) * 6 + fill * cw + rc
     safe(scr, row, x0, s, curses.color_pair(5) | curses.A_DIM)
 
@@ -241,7 +241,7 @@ def draw_vbars(scr, row, x0, cw):
 def draw(scr, cur, today, notes, weeks, status=""):
     H, W = scr.getmaxyx()
 
-    if H < 20 or W < 30:
+    if H < 21 or W < 43:
         scr.erase()
         safe(scr, H // 2, max(0, (W - 20) // 2),
              "terminal too small", curses.A_DIM)
@@ -275,7 +275,7 @@ def draw(scr, cur, today, notes, weeks, status=""):
     draw_hline(scr, 5, x0, "├", "┼", "┤", "─", cw)
 
     avail = SEP_ROW - 6 - len(weeks)
-    row_h = max(2, avail // len(weeks))
+    row_h = max(1, avail // len(weeks))
 
     # ── Calendar weeks ────────────────────────────────────────────────────────
     for wi, week in enumerate(weeks):
@@ -347,7 +347,6 @@ def draw(scr, cur, today, notes, weeks, status=""):
 
 def main(scr):
     curs(0)
-    curses.start_color()
     try:
         curses.use_default_colors()
         bg = -1
@@ -362,7 +361,6 @@ def main(scr):
         curses.init_pair(4, PINK,                  bg)
         curses.init_pair(5, curses.COLOR_WHITE,    bg)
         curses.init_pair(6, curses.COLOR_RED,      bg)
-    scr.keypad(True)
 
     cur        = datetime.date.today()
     status     = ""
@@ -476,7 +474,7 @@ def main(scr):
                 _clipboard = raw
                 err = save_note(cur, "")
                 if err: status = f"delete failed: {err}"
-                else:   update_note(cur, ""); status = "deleted  (v to undo)"
+                else:   update_note(cur, ""); status = "deleted  (v to undo — overwrites clipboard)"
         elif ch in (ord('c'), ord('C')):
             raw, _ = notes.get(cur, _EMPTY)
             if raw:
