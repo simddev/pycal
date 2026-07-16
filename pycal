@@ -4,8 +4,8 @@
   h/←  l/→  k/↑  j/↓  — navigate days
   [ / ]               — previous / next month
   n / p               — jump to next / prev day with a note
-  a / Enter           — edit note for selected day
-  d                   — delete note for selected day
+  a / Enter           — edit note for selected day  (Ctrl+G to discard)
+  d                   — delete note  (v to undo)
   c                   — copy note for selected day
   v                   — paste copied note
   /                   — search note content
@@ -26,6 +26,9 @@ _CAL        = calendar.Calendar(firstweekday=0)
 _DAYS       = calendar.day_abbr     # locale-aware, 0=Mon … 6=Sun
 _EMPTY      = ("", ())              # sentinel for days with no note
 
+_BS = (curses.KEY_BACKSPACE, 127, 8, "\x7f", "\x08")
+_CR = (10, 13, "\n", "\r", curses.KEY_ENTER)
+
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
 def note_path(d): return NOTES / f"{d:%Y-%m-%d}.txt"
@@ -33,7 +36,7 @@ def note_path(d): return NOTES / f"{d:%Y-%m-%d}.txt"
 def get_note(d):
     try:
         with note_path(d).open("rb") as f:
-            raw = f.read(_NOTE_BYTES)
+            raw = f.read(_NOTE_BYTES + 3)
         return raw.decode("utf-8", errors="replace").strip()[:NOTE_MAX]
     except OSError:
         return ""
@@ -67,6 +70,8 @@ def find_notes(query=None):
     try:
         for p in NOTES.glob("????-??-??.txt"):
             try:
+                if p.stat().st_size == 0:
+                    continue
                 with p.open("rb") as f:
                     content = f.read(_NOTE_BYTES).decode("utf-8", errors="replace")
                 if q is not None:
@@ -86,7 +91,9 @@ def parse_date(s, ref_y, ref_m):
     s = s.strip()
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
         try:
-            return datetime.datetime.strptime(s, fmt).date()
+            d = datetime.datetime.strptime(s, fmt).date()
+            if d.year >= 1900:
+                return d
         except ValueError:
             pass
     try:
@@ -101,26 +108,23 @@ def parse_date(s, ref_y, ref_m):
 
 # ── Curses helpers ────────────────────────────────────────────────────────────
 
+def curs(v):
+    try: curses.curs_set(v)
+    except curses.error: pass
+
 def safe(scr, row, col, s, attr=0):
     H, W = scr.getmaxyx()
     if row < 0 or row >= H or col < 0 or col >= W:
         return
-    s = s[:W - col]
-    if not s: return
     try:
-        if col + len(s) < W:
-            scr.addstr(row, col, s, attr)
-        else:
-            if len(s) > 1:
-                scr.addstr(row, col, s[:-1], attr)
-            scr.insch(row, W - 1, s[-1], attr)
+        scr.addstr(row, col, s[:W - col], attr)
     except curses.error:
         pass
 
 def prompt_line(scr, row, W, label):
     """Single-line input on `row`. Returns str on Enter, None on ESC."""
     safe(scr, row, 0, label.ljust(W - 1), curses.color_pair(1))
-    curses.curs_set(1)
+    curs(1)
     buf, pos = [], 0
     x0 = len(label)
     iw = max(1, W - x0 - 2)
@@ -131,25 +135,28 @@ def prompt_line(scr, row, W, label):
             scr.move(row, x0 + min(pos, iw - 1))
         except curses.error: pass
         scr.refresh()
-        ch = scr.get_wch()
-        if   ch in (10, 13, "\n", "\r", curses.KEY_ENTER):  curses.curs_set(0); return "".join(buf)
-        elif ch in (27, "\x1b"):          curses.curs_set(0); return None
+        try:
+            ch = scr.get_wch()
+        except KeyboardInterrupt:
+            curs(0); return None
+        if   ch in _CR:                                   curs(0); return "".join(buf)
+        elif ch in (27, "\x1b"):                          curs(0); return None
         elif ch == curses.KEY_RESIZE:
             _, W = scr.getmaxyx(); iw = max(1, W - x0 - 2)
             if len(buf) > iw: del buf[iw:]; pos = min(pos, len(buf))
             safe(scr, row, 0, label.ljust(W - 1), curses.color_pair(1))
-        elif ch in (curses.KEY_BACKSPACE, 127, 8, "\x7f", "\x08"):
+        elif ch in _BS:
             if pos: buf.pop(pos - 1); pos -= 1
-        elif ch == curses.KEY_HOME:                      pos = 0
-        elif ch == curses.KEY_END:                       pos = len(buf)
-        elif ch == curses.KEY_LEFT and pos:              pos -= 1
-        elif ch == curses.KEY_RIGHT and pos < len(buf):  pos += 1
+        elif ch == curses.KEY_HOME:                       pos = 0
+        elif ch == curses.KEY_END:                        pos = len(buf)
+        elif ch == curses.KEY_LEFT and pos:               pos -= 1
+        elif ch == curses.KEY_RIGHT and pos < len(buf):   pos += 1
         elif isinstance(ch, str) and ch.isprintable() and len(buf) < iw:
             buf.insert(pos, ch); pos += 1
 
 def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_base=""):
-    """Multi-line inline note editor.  Enter = new line,  ESC = save."""
-    curses.curs_set(1)
+    """Multi-line inline note editor.  Enter = new line,  ESC = save,  Ctrl+G = discard."""
+    curs(1)
     buf = list(prefill)
     pos = len(buf)
 
@@ -188,29 +195,35 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
         except curses.error: pass
         scr.refresh()
 
-        ch = scr.get_wch()
-        if ch in (27, "\x1b"):                           # ESC → save & exit
+        try:
+            ch = scr.get_wch()
+        except KeyboardInterrupt:
             break
-        elif ch in (10, 13, "\n", "\r", curses.KEY_ENTER): # Enter → newline
+        if ch in (27, "\x1b"):                            # ESC → save & exit
+            break
+        elif ch in (7, "\x07"):                           # Ctrl+G → discard
+            curs(0)
+            return prefill
+        elif ch in _CR:                                   # Enter → newline
             if ri < max_rows - 1 and len(buf) < NOTE_MAX:
                 buf.insert(pos, "\n"); pos += 1
             else:
                 curses.beep()
-        elif ch in (curses.KEY_BACKSPACE, 127, 8, "\x7f", "\x08"):
+        elif ch in _BS:
             if pos: buf.pop(pos - 1); pos -= 1
-        elif ch == curses.KEY_LEFT and pos:              pos -= 1
-        elif ch == curses.KEY_RIGHT and pos < len(buf):  pos += 1
+        elif ch == curses.KEY_LEFT and pos:               pos -= 1
+        elif ch == curses.KEY_RIGHT and pos < len(buf):   pos += 1
         elif ch == curses.KEY_HOME:  pos = rc_to_pos(ri, 0, ls)
         elif ch == curses.KEY_END:   pos = rc_to_pos(ri, len(ls[ri]) if ri < len(ls) else 0, ls)
-        elif ch == curses.KEY_UP and ri > 0:             pos = rc_to_pos(ri - 1, ci, ls)
-        elif ch == curses.KEY_DOWN and ri < len(ls) - 1: pos = rc_to_pos(ri + 1, ci, ls)
-        elif ch == curses.KEY_DC:                        # forward delete
+        elif ch == curses.KEY_UP and ri > 0:              pos = rc_to_pos(ri - 1, ci, ls)
+        elif ch == curses.KEY_DOWN and ri < len(ls) - 1:  pos = rc_to_pos(ri + 1, ci, ls)
+        elif ch == curses.KEY_DC:                         # forward delete
             if pos < len(buf): buf.pop(pos)
-        elif ch == curses.KEY_RESIZE: pass               # next draw fixes layout
+        elif ch == curses.KEY_RESIZE: pass                # next draw fixes layout
         elif isinstance(ch, str) and ch.isprintable() and len(buf) < NOTE_MAX:
             buf.insert(pos, ch); pos += 1
 
-    curses.curs_set(0)
+    curs(0)
     return "".join(buf)
 
 # ── Drawing ───────────────────────────────────────────────────────────────────
@@ -228,7 +241,7 @@ def draw_vbars(scr, row, x0, cw):
 def draw(scr, cur, today, notes, weeks, status=""):
     H, W = scr.getmaxyx()
 
-    if H < 12 or W < 30:
+    if H < 20 or W < 30:
         scr.erase()
         safe(scr, H // 2, max(0, (W - 20) // 2),
              "terminal too small", curses.A_DIM)
@@ -240,7 +253,6 @@ def draw(scr, cur, today, notes, weeks, status=""):
     x0      = max(0, (W - gw) // 2)
     NOTE_H  = max(3, H // 7) + 1
     SEP_ROW = H - NOTE_H - 1
-    CAL_H   = SEP_ROW
     m       = cur.month
 
     scr.erase()
@@ -262,17 +274,17 @@ def draw(scr, cur, today, notes, weeks, status=""):
 
     draw_hline(scr, 5, x0, "├", "┼", "┤", "─", cw)
 
-    avail = CAL_H - 6 - len(weeks)
+    avail = SEP_ROW - 6 - len(weeks)
     row_h = max(2, avail // len(weeks))
 
     # ── Calendar weeks ────────────────────────────────────────────────────────
     for wi, week in enumerate(weeks):
         base = 6 + wi * (row_h + 1)
-        if base >= CAL_H - 1:
+        if base >= SEP_ROW - 1:
             break
 
         for r in range(row_h):
-            if base + r < CAL_H:
+            if base + r < SEP_ROW:
                 draw_vbars(scr, base + r, x0, cw)
 
         for di, dt in enumerate(week):
@@ -288,17 +300,18 @@ def draw(scr, cur, today, notes, weeks, status=""):
 
             safe(scr, base, x, f"{dt.day:2d}", attr)
 
-            if raw and in_month:
-                safe(scr, base, x + 2, " ·", curses.A_DIM)
+            if raw:
+                note_attr = curses.A_DIM if in_month else (curses.color_pair(5) | curses.A_DIM)
+                safe(scr, base, x + 2, " ·", note_attr)
                 for ln_i, ln in enumerate(lns):
                     row = base + 1 + ln_i
-                    if row >= base + row_h or row >= CAL_H:
+                    if row >= base + row_h or row >= SEP_ROW:
                         break
                     display = ln if len(ln) <= cw - 1 else ln[:cw - 2] + "…"
-                    safe(scr, row, x, display, curses.A_DIM)
+                    safe(scr, row, x, display, note_attr)
 
         sep = base + row_h
-        if sep < CAL_H:
+        if sep < SEP_ROW:
             if wi == len(weeks) - 1:
                 draw_hline(scr, sep, x0, "└", "┴", "┘", "─", cw)
             else:
@@ -333,21 +346,22 @@ def draw(scr, cur, today, notes, weeks, status=""):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main(scr):
-    curses.curs_set(0)
+    curs(0)
     curses.start_color()
     try:
         curses.use_default_colors()
         bg = -1
     except curses.error:
         bg = curses.COLOR_BLACK
-    BLUE = 69  if curses.COLORS >= 256 else curses.COLOR_BLUE
-    PINK = 205 if curses.COLORS >= 256 else curses.COLOR_MAGENTA
-    curses.init_pair(1, BLUE,                  bg)
-    curses.init_pair(2, curses.COLOR_YELLOW,   bg)
-    curses.init_pair(3, curses.COLOR_WHITE,    BLUE)
-    curses.init_pair(4, PINK,                  bg)
-    curses.init_pair(5, curses.COLOR_WHITE,    bg)
-    curses.init_pair(6, curses.COLOR_RED,      bg)
+    if curses.has_colors():
+        BLUE = 69  if curses.COLORS >= 256 else curses.COLOR_BLUE
+        PINK = 205 if curses.COLORS >= 256 else curses.COLOR_MAGENTA
+        curses.init_pair(1, BLUE,                  bg)
+        curses.init_pair(2, curses.COLOR_YELLOW,   bg)
+        curses.init_pair(3, curses.COLOR_WHITE,    BLUE)
+        curses.init_pair(4, PINK,                  bg)
+        curses.init_pair(5, curses.COLOR_WHITE,    bg)
+        curses.init_pair(6, curses.COLOR_RED,      bg)
     scr.keypad(True)
 
     cur        = datetime.date.today()
@@ -366,9 +380,8 @@ def main(scr):
             _cache_notes = {}
             for week in _cache_weeks:
                 for dt in week:
-                    if dt.month == m:
-                        text = get_note(dt)
-                        _cache_notes[dt] = (text, text.split("\n") if text else [])
+                    text = get_note(dt)
+                    _cache_notes[dt] = (text, text.split("\n") if text else [])
             _cache_key = (y, m)
         return _cache_notes, _cache_weeks
 
@@ -381,6 +394,13 @@ def main(scr):
     def invalidate():
         nonlocal _cache_key, _noted_dates
         _cache_key   = None
+        _noted_dates = None
+
+    def update_note(d, text):
+        nonlocal _noted_dates
+        text = text.strip()
+        if _cache_key == (d.year, d.month):
+            _cache_notes[d] = (text, text.split("\n") if text else [])
         _noted_dates = None
 
     def move(days=0, months=0):
@@ -431,18 +451,18 @@ def main(scr):
         elif ch in (ord('r'), ord('R')):               invalidate()
         elif ch in (ord('n'), ord('N')):               jump_to_note(forward=True)
         elif ch in (ord('p'), ord('P')):               jump_to_note(forward=False)
-        elif ch == ord('/'):
+        elif ch == ord('/') and ny > 0:
             query = prompt_line(scr, ny, W, "  search: ")
             if query and query.strip():
                 results = find_notes(query)
                 if results:
-                    nexts  = [d for d in results if d >= cur]
+                    nexts  = [d for d in results if d > cur]
                     cur    = nexts[0] if nexts else results[0]
                     n      = len(results)
                     status = f"{n} match{'es' if n != 1 else ''} for '{query}'"
                 else:
                     status = f"no matches for '{query}'"
-        elif ch in (ord('g'), ord('G')):
+        elif ch in (ord('g'), ord('G')) and ny > 0:
             ds = prompt_line(scr, ny, W, "  go to (DD  DD/MM  YYYY-MM-DD): ")
             if ds and ds.strip():
                 parsed = parse_date(ds, cur.year, cur.month)
@@ -451,9 +471,12 @@ def main(scr):
                 else:
                     status = f"invalid date: '{ds}'"
         elif ch in (ord('d'), ord('D')):
-            err = save_note(cur, "")
-            if err: status = f"delete failed: {err}"
-            else:   invalidate()
+            raw, _ = notes.get(cur, _EMPTY)
+            if raw:
+                _clipboard = raw
+                err = save_note(cur, "")
+                if err: status = f"delete failed: {err}"
+                else:   update_note(cur, ""); status = "deleted  (v to undo)"
         elif ch in (ord('c'), ord('C')):
             raw, _ = notes.get(cur, _EMPTY)
             if raw:
@@ -465,13 +488,13 @@ def main(scr):
             if _clipboard:
                 err = save_note(cur, _clipboard)
                 if err: status = f"paste failed: {err}"
-                else:   invalidate(); status = "pasted"
+                else:   update_note(cur, _clipboard); status = "pasted"
             else:
                 status = "clipboard empty"
         elif ch in (ord('a'), ord('A'), 10, 13, curses.KEY_ENTER) and ny > 0:
             max_rows  = max(1, H - ny - 2)
             hint_base = (f"  {cur.strftime('%a %d %b %Y')}"
-                         f"   Enter:new-line   ESC:save")
+                         f"   Enter:new-line   ESC:save   Ctrl+G:discard")
             safe(scr, ny,     0, hint_base.ljust(W - 1), curses.color_pair(1))
             safe(scr, ny + 1, 0, " " * (W - 1),          curses.color_pair(1))
             prefill, _ = notes.get(cur, _EMPTY)
@@ -480,7 +503,7 @@ def main(scr):
             if new.strip() != prefill:
                 err = save_note(cur, new)
                 if err: status = f"save failed: {err}"
-                else:   invalidate()
+                else:   update_note(cur, new)
 
 def _sigterm(sig, frame):
     try: curses.endwin()
@@ -488,6 +511,12 @@ def _sigterm(sig, frame):
     sys.exit(0)
 
 signal.signal(signal.SIGTERM, _sigterm)
-os.environ.setdefault("ESCDELAY", "25")
-locale.setlocale(locale.LC_ALL, '')
-curses.wrapper(main)
+os.environ.setdefault("ESCDELAY", "75")
+try:
+    locale.setlocale(locale.LC_ALL, '')
+except locale.Error:
+    pass
+try:
+    curses.wrapper(main)
+except KeyboardInterrupt:
+    pass
