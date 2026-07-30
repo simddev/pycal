@@ -25,7 +25,7 @@ A lightweight terminal calendar with per-day notes. Single Python file, no depen
 
 - Python 3.7+
 - A terminal with UTF-8 and 256-colour support (ncursesw)
-- Minimum terminal size: 30 columns × 20 rows
+- Minimum terminal size: 43 columns × 21 rows
 
 ## Installation
 
