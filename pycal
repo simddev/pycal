@@ -73,7 +73,7 @@ def find_notes(query=None):
                 if p.stat().st_size == 0:
                     continue
                 with p.open("rb") as f:
-                    content = f.read(_NOTE_BYTES).decode("utf-8", errors="replace")
+                    content = f.read(_NOTE_BYTES + 3).decode("utf-8", errors="replace")
                 if q is not None:
                     if q not in content.lower():
                         continue
@@ -159,6 +159,7 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
     curs(1)
     buf = list(prefill)
     pos = len(buf)
+    scroll_top = 0
 
     def lines():
         return "".join(buf).split("\n")
@@ -175,6 +176,12 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
         ls     = lines()
         ri, ci = pos_to_rc()
 
+        # Keep cursor inside the visible viewport
+        if ri < scroll_top:
+            scroll_top = ri
+        elif ri >= scroll_top + max_rows:
+            scroll_top = ri - max_rows + 1
+
         if hint_row >= 0:
             _, W = scr.getmaxyx()
             counter = f"  [{len(buf)}/{NOTE_MAX}]"
@@ -182,16 +189,17 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
 
         for i in range(max_rows):
             row = start_row + i
+            li  = scroll_top + i
             try:
                 scr.move(row, col); scr.clrtoeol()
             except curses.error: pass
-            if i < len(ls):
+            if li < len(ls):
                 try:
-                    scr.addstr(row, col, ls[i][:w - 1], curses.A_BOLD)
+                    scr.addstr(row, col, ls[li][:w - 1], curses.A_BOLD)
                 except curses.error: pass
 
         try:
-            scr.move(start_row + ri, col + min(ci, w - 2))
+            scr.move(start_row + ri - scroll_top, col + min(ci, w - 2))
         except curses.error: pass
         scr.refresh()
 
@@ -206,7 +214,7 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
             curs(0)
             return prefill
         elif ch in _CR:                                   # Enter → newline
-            if ri < max_rows - 1 and len(buf) < NOTE_MAX:
+            if len(buf) < NOTE_MAX:
                 buf.insert(pos, "\n"); pos += 1
             else:
                 curses.beep()
@@ -341,7 +349,8 @@ def draw(scr, cur, today, notes, weeks, status=""):
         for i, line in enumerate(note_lines):
             row = ny + 2 + i
             if row >= H: break
-            safe(scr, row, 2, line[:W - 3], curses.A_BOLD)
+            display = line if len(line) <= W - 3 else line[:W - 4] + "…"
+            safe(scr, row, 2, display, curses.A_BOLD)
     else:
         safe(scr, ny + 2, 2, "no note  —  press [a] to add one", curses.A_DIM)
 
