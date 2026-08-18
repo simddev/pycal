@@ -342,14 +342,18 @@ def draw(scr, cur, today, notes, weeks, status=""):
     draw_hline(scr, 5, x0, "├", "┼", "┤", "─", cw)
 
     SEP_ROW = H - NOTE_H - 1
-    avail = SEP_ROW - 6 - len(weeks)
-    row_h = max(1, avail // len(weeks))
-    extra = max(0, avail - row_h * len(weeks))  # distribute remainder to last N weeks
+    nw    = len(weeks)
+    avail = SEP_ROW - 6 - nw
+    if avail < nw:                        # can't give each week 1 row — reduce draw count
+        nw    = max(1, (SEP_ROW - 6) // 2)
+        avail = SEP_ROW - 6 - nw
+    row_h = max(1, avail // nw)
+    extra = max(0, avail - row_h * nw)  # distribute remainder to last N weeks
 
     # ── Calendar weeks ────────────────────────────────────────────────────────
     base = 6
     for wi, week in enumerate(weeks):
-        this_h = row_h + (1 if wi >= len(weeks) - extra else 0)
+        this_h = row_h + (1 if wi >= nw - extra else 0)
         if base >= SEP_ROW - 1:
             break
 
@@ -390,7 +394,7 @@ def draw(scr, cur, today, notes, weeks, status=""):
         sep = base + this_h
         if sep < SEP_ROW:
             next_base = base + this_h + 1
-            if wi == len(weeks) - 1 or next_base >= SEP_ROW - 1:
+            if wi == nw - 1 or next_base >= SEP_ROW - 1:
                 draw_hline(scr, sep, x0, "└", "┴", "┘", "─", cw)
             else:
                 draw_hline(scr, sep, x0, "├", "┼", "┤", "─", cw)
@@ -622,12 +626,13 @@ def main(scr):
                 status = "no note to copy"
         elif ch in (ord("v"), ord("V")):
             if _clipboard:
+                had_note = bool(notes.get(cur, _EMPTY)[0])
                 err = save_note(cur, _clipboard)
                 if err:
                     status = f"paste failed: {err}"
                 else:
                     update_note(cur, _clipboard)
-                    status = "pasted"
+                    status = "pasted (overwrote existing note)" if had_note else "pasted"
             else:
                 status = "clipboard empty"
         elif ch in (ord("a"), ord("A"), 10, 13, curses.KEY_ENTER) and ny > 0:
