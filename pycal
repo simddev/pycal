@@ -16,7 +16,7 @@
 Notes stored in $XDG_DATA_HOME/cal-notes/YYYY-MM-DD.txt
 """
 
-import curses, calendar, datetime, json, locale, os, signal, subprocess, sys
+import bisect, curses, calendar, datetime, json, locale, os, signal, stat, subprocess, sys
 from pathlib import Path
 
 _DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
@@ -26,9 +26,29 @@ _NOTE_BYTES = NOTE_MAX * 4  # 4 bytes/char worst-case UTF-8
 _CAL = calendar.Calendar(firstweekday=0)
 _DAYS = calendar.day_abbr  # locale-aware, 0=Mon … 6=Sun
 _EMPTY = ("", ())  # sentinel for days with no note
+_MAX_DATE = datetime.date(9999, 11, 30)  # a Dec 9999 grid would run past date.max
+
+# Control characters have to go: NUL makes addstr raise, tab and CR move the
+# cursor, ESC could smuggle terminal sequences in from a hand-edited file.
+_CLEAN = {c: None for c in range(32) if c != 10}
+_CLEAN[9] = " "
+_CLEAN[127] = None
 
 _BS = (curses.KEY_BACKSPACE, 127, 8, "\x7f", "\x08")
 _CR = (10, 13, "\n", "\r", curses.KEY_ENTER)
+
+# Key hints, widest first — draw() picks the widest one that fits the terminal.
+_HINTS = (
+    "  a:edit  d:del  c:copy  v:paste  [:prev-mo  ]:next-mo"
+    "  n:next-note  p:prev-note  /:search  g:goto  t:today  r:refresh  q:quit",
+    "  a:edit  d:del  c:copy  v:paste  [ ]:month  n/p:note"
+    "  /:search  g:goto  t:today  r:reload  q:quit",
+    "  a:edit  d:del  c:copy  v:paste  [ ]:mo  n/p:note"
+    "  /:find  g:go  t:today  q:quit",
+    "  a:edit  d:del  c:copy  v:paste  [ ]  n/p  /  g  t  q:quit",
+    "  a:edit  d:del  c:copy  v:paste  [ ] n/p / g t q",
+    "  a:edit  d c v  [ ] n/p  / g t r  q:quit",
+)
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
@@ -37,11 +57,18 @@ def note_path(d):
     return NOTES / f"{d:%Y-%m-%d}.txt"
 
 
+def decode_note(raw):
+    return raw.decode("utf-8", errors="replace").translate(_CLEAN)
+
+
 def get_note(d):
     try:
-        with note_path(d).open("rb") as f:
+        p = note_path(d)
+        if not p.is_file():  # opening a fifo here would block forever
+            return ""
+        with p.open("rb") as f:
             raw = f.read(_NOTE_BYTES + 3)
-        return raw.decode("utf-8", errors="replace").strip()[:NOTE_MAX]
+        return decode_note(raw).strip()[:NOTE_MAX]
     except OSError:
         return ""
 
@@ -78,10 +105,11 @@ def find_notes(query=None):
     try:
         for p in NOTES.glob("????-??-??.txt"):
             try:
-                if p.stat().st_size == 0:
+                st = p.stat()
+                if not stat.S_ISREG(st.st_mode) or st.st_size == 0:
                     continue
                 with p.open("rb") as f:
-                    content = f.read(_NOTE_BYTES + 3).decode("utf-8", errors="replace")
+                    content = decode_note(f.read(_NOTE_BYTES + 3))
                 if q is not None:
                     if q not in content.lower():
                         continue
@@ -98,7 +126,7 @@ def find_notes(query=None):
 def parse_date(s, ref_y, ref_m):
     """Parse a date string: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD/MM, DD.MM, or DD."""
     s = s.strip()
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y/%m/%d", "%Y.%m.%d"):
         try:
             d = datetime.datetime.strptime(s, fmt).date()
             if d.year >= 1900:
@@ -136,19 +164,25 @@ def safe(scr, row, col, s, attr=0):
         pass
 
 
-def prompt_line(scr, row, W, label):
+def prompt_line(scr, row, W, label, maxlen=NOTE_MAX):
     """Single-line input on `row`. Returns str on Enter, None on ESC."""
     safe(scr, row, 0, label.ljust(W - 1), curses.color_pair(1))
     curs(1)
-    buf, pos = [], 0
+    buf, pos, scroll = [], 0, 0
     x0 = len(label)
     iw = max(1, W - x0 - 2)
     while True:
+        # Scroll horizontally so the cursor stays visible in a narrow field
+        scroll = max(0, min(scroll, len(buf) - iw + 1))
+        if pos < scroll:
+            scroll = pos
+        elif pos >= scroll + iw:
+            scroll = pos - iw + 1
         try:
             scr.move(row, x0)
             scr.clrtoeol()
-            scr.addstr(row, x0, "".join(buf)[:iw], curses.A_BOLD)
-            scr.move(row, x0 + min(pos, iw - 1))
+            scr.addstr(row, x0, "".join(buf)[scroll : scroll + iw], curses.A_BOLD)
+            scr.move(row, x0 + pos - scroll)
         except curses.error:
             pass
         scr.refresh()
@@ -164,12 +198,8 @@ def prompt_line(scr, row, W, label):
             curs(0)
             return None
         elif ch == curses.KEY_RESIZE:
-            _, W = scr.getmaxyx()
-            iw = max(1, W - x0 - 2)
-            if len(buf) > iw:
-                del buf[iw:]
-                pos = min(pos, len(buf))
-            safe(scr, row, 0, label.ljust(W - 1), curses.color_pair(1))
+            curs(0)  # `row` and `x0` are stale now — cancel rather than draw wrong
+            return None
         elif ch in _BS:
             if pos:
                 buf.pop(pos - 1)
@@ -182,7 +212,7 @@ def prompt_line(scr, row, W, label):
             pos -= 1
         elif ch == curses.KEY_RIGHT and pos < len(buf):
             pos += 1
-        elif isinstance(ch, str) and ch.isprintable() and len(buf) < iw:
+        elif isinstance(ch, str) and ch.isprintable() and len(buf) < maxlen:
             buf.insert(pos, ch)
             pos += 1
 
@@ -193,6 +223,8 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
     buf = list(prefill)
     pos = len(buf)
     scroll_top = 0
+    scroll_col = 0
+    vw = max(1, w - 1)  # visible columns per line
 
     def lines():
         return "".join(buf).split("\n")
@@ -214,6 +246,10 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
             scroll_top = ri
         elif ri >= scroll_top + max_rows:
             scroll_top = ri - max_rows + 1
+        if ci < scroll_col:
+            scroll_col = ci
+        elif ci >= scroll_col + vw:
+            scroll_col = ci - vw + 1
 
         if hint_row >= 0:
             _, W = scr.getmaxyx()
@@ -236,12 +272,13 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
                 pass
             if li < len(ls):
                 try:
-                    scr.addstr(row, col, ls[li][: w - 1], curses.A_BOLD)
+                    seg = ls[li][scroll_col : scroll_col + vw]
+                    scr.addstr(row, col, seg, curses.A_BOLD)
                 except curses.error:
                     pass
 
         try:
-            scr.move(start_row + ri - scroll_top, col + min(ci, w - 2))
+            scr.move(start_row + ri - scroll_top, col + ci - scroll_col)
         except curses.error:
             pass
         scr.refresh()
@@ -282,7 +319,7 @@ def input_note(scr, start_row, col, w, max_rows, prefill="", hint_row=-1, hint_b
             if pos < len(buf):
                 buf.pop(pos)
         elif ch == curses.KEY_RESIZE:
-            pass  # next draw fixes layout
+            break  # geometry came from the caller; save and let main() relayout
         elif isinstance(ch, str) and ch.isprintable() and len(buf) < NOTE_MAX:
             buf.insert(pos, ch)
             pos += 1
@@ -318,6 +355,11 @@ def draw(scr, cur, today, notes, weeks, status=""):
     gw = 7 * (cw + 1) + 1
     x0 = max(0, (W - gw) // 2)
     NOTE_H = max(4, H // 5)
+    # The grid has priority: shrink the notes panel (floor 3 rows — date, hints,
+    # one line of note) when that is what lets every week keep a row of its own.
+    fits_all = H - 7 - 2 * len(weeks)
+    if NOTE_H > fits_all:
+        NOTE_H = max(3, fits_all)
     m = cur.month
 
     scr.erase()
@@ -342,17 +384,23 @@ def draw(scr, cur, today, notes, weeks, status=""):
     draw_hline(scr, 5, x0, "├", "┼", "┤", "─", cw)
 
     SEP_ROW = H - NOTE_H - 1
-    nw    = len(weeks)
+    nw = len(weeks)
     avail = SEP_ROW - 6 - nw
-    if avail < nw:                        # can't give each week 1 row — reduce draw count
-        nw    = max(1, (SEP_ROW - 6) // 2)
+    if avail < nw:  # can't give each week 1 row — reduce draw count
+        nw = max(1, (SEP_ROW - 6) // 2)
         avail = SEP_ROW - 6 - nw
     row_h = max(1, avail // nw)
     extra = max(0, avail - row_h * nw)  # distribute remainder to last N weeks
 
+    # If a week had to be dropped, slide the window so the selected day is shown
+    w0 = 0
+    if nw < len(weeks):
+        sel = next((i for i, wk in enumerate(weeks) if wk[0] <= cur <= wk[6]), 0)
+        w0 = min(max(0, sel - nw + 1), len(weeks) - nw)
+
     # ── Calendar weeks ────────────────────────────────────────────────────────
     base = 6
-    for wi, week in enumerate(weeks):
+    for wi, week in enumerate(weeks[w0:]):
         this_h = row_h + (1 if wi >= nw - extra else 0)
         if base >= SEP_ROW - 1:
             break
@@ -414,16 +462,8 @@ def draw(scr, cur, today, notes, weeks, status=""):
         f"  {cur.strftime('%a %d %b %Y')}".ljust(W - 1),
         curses.color_pair(1),
     )
-    safe(
-        scr,
-        ny + 1,
-        0,
-        "  a:edit  d:del  c:copy  v:paste  [:prev-mo  ]:next-mo"
-        "  n:next-note  p:prev-note  /:search  g:goto  t:today  r:refresh  q:quit".ljust(
-            W - 1
-        ),
-        curses.color_pair(1),
-    )
+    hints = next((h for h in _HINTS if len(h) <= W - 1), _HINTS[-1])
+    safe(scr, ny + 1, 0, hints.ljust(W - 1), curses.color_pair(1))
 
     if status:
         safe(scr, ny + 2, 2, status[: W - 3], curses.color_pair(6))
@@ -494,11 +534,17 @@ def main(scr):
         _noted_dates = None
 
     def update_note(d, text):
-        nonlocal _noted_dates
         text = text.strip()
         if _cache_key == (d.year, d.month):
             _cache_notes[d] = (text, text.split("\n") if text else [])
-        _noted_dates = None
+        if _noted_dates is not None:
+            # Patch the index in place; rescanning costs one read per note file
+            i = bisect.bisect_left(_noted_dates, d)
+            listed = i < len(_noted_dates) and _noted_dates[i] == d
+            if text and not listed:
+                _noted_dates.insert(i, d)
+            elif not text and listed:
+                del _noted_dates[i]
 
     def move(days=0, months=0):
         nonlocal cur
@@ -533,6 +579,7 @@ def main(scr):
 
     while True:
         today = datetime.date.today()
+        cur = min(cur, _MAX_DATE)  # catches goto, note files and month stepping
         notes, weeks = get_notes(cur.year, cur.month)
         ny, H = draw(scr, cur, today, notes, weeks, status)
         status = ""
@@ -583,6 +630,7 @@ def main(scr):
             cur = today
         elif ch in (ord("r"), ord("R")):
             invalidate()
+            status = "reloaded from disk"
         elif ch in (ord("n"), ord("N")):
             jump_to_note(forward=True)
         elif ch in (ord("p"), ord("P")):
@@ -600,14 +648,15 @@ def main(scr):
                 else:
                     status = f"no matches for '{query}'"
         elif ch in (ord("g"), ord("G")) and ny > 0:
-            ds = prompt_line(scr, ny, W, "  go to (DD  DD/MM  YYYY-MM-DD): ")
+            label = "  go to (DD  DD/MM  YYYY-MM-DD): " if W >= 60 else "  go to: "
+            ds = prompt_line(scr, ny, W, label)
             if ds and ds.strip():
                 parsed = parse_date(ds, cur.year, cur.month)
                 if parsed:
                     cur = parsed
                 else:
                     status = f"invalid date: '{ds}'"
-        elif ch in (ord("d"), ord("D")):
+        elif ch in (ord("d"), ord("D")) and ny > 0:
             raw, _ = notes.get(cur, _EMPTY)
             if raw:
                 _clipboard = raw
@@ -617,14 +666,16 @@ def main(scr):
                 else:
                     update_note(cur, "")
                     status = "deleted  (v to undo — overwrites clipboard)"
-        elif ch in (ord("c"), ord("C")):
+            else:
+                status = "no note to delete"
+        elif ch in (ord("c"), ord("C")) and ny > 0:
             raw, _ = notes.get(cur, _EMPTY)
             if raw:
                 _clipboard = raw
                 status = "copied"
             else:
                 status = "no note to copy"
-        elif ch in (ord("v"), ord("V")):
+        elif ch in (ord("v"), ord("V")) and ny > 0:
             if _clipboard:
                 had_note = bool(notes.get(cur, _EMPTY)[0])
                 err = save_note(cur, _clipboard)
@@ -632,7 +683,9 @@ def main(scr):
                     status = f"paste failed: {err}"
                 else:
                     update_note(cur, _clipboard)
-                    status = "pasted (overwrote existing note)" if had_note else "pasted"
+                    status = (
+                        "pasted (overwrote existing note)" if had_note else "pasted"
+                    )
             else:
                 status = "clipboard empty"
         elif ch in (ord("a"), ord("A"), 10, 13, curses.KEY_ENTER) and ny > 0:

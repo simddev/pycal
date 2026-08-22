@@ -3,29 +3,39 @@
 A lightweight terminal calendar with per-day notes. Single Python file, no dependencies beyond the standard library.
 
 ```
-                  ◄  July 2026  ►
+                       ◄  July 2026  ►
+
   ┌───────┬───────┬───────┬───────┬───────┬───────┬───────┐
   │  Mon  │  Tue  │  Wed  │  Thu  │  Fri  │  Sat  │  Sun  │
   ├───────┼───────┼───────┼───────┼───────┼───────┼───────┤
-  │ - 7-  │ - 8-  │ - 9-  │ -10-  │ -11-· │ -12-  │ -13-  │
-  │       │       │       │       │ standup│       │       │
+  │-29-   │-30-   │- 1-   │- 2-   │- 3-   │- 4-   │- 5-   │
   ├───────┼───────┼───────┼───────┼───────┼───────┼───────┤
-  │ -14-  │ -15-  │ -16-· │ -17-  │ -18-  │ -19-  │ -20-  │
-  │       │       │ review│       │       │       │       │
+  │- 6-   │- 7-   │- 8-   │- 9-   │-10-·  │-11-   │-12-   │
   ├───────┼───────┼───────┼───────┼───────┼───────┼───────┤
-  │ -21-  │ -22-  │ -23-  │ -24-  │ -25-  │ -26-  │ -27-  │
+  │-13-   │-14-   │-15-   │-16-·  │-17-   │-18-   │-19-   │
+  │       │       │       │code … │       │       │       │
+  ├───────┼───────┼───────┼───────┼───────┼───────┼───────┤
+  │-20-   │-21-   │-22-   │-23-·  │-24-   │-25-   │-26-   │
+  │       │       │       │denti… │       │       │       │
+  ├───────┼───────┼───────┼───────┼───────┼───────┼───────┤
+  │-27-   │-28-   │-29-   │-30-   │-31-   │- 1-   │- 2-   │
+  │       │       │       │       │       │       │       │
   └───────┴───────┴───────┴───────┴───────┴───────┴───────┘
-  ────────────────────────────────────────────────────────────
-  Wed 16 Jul 2026
-  a:edit  d:del  c:copy  v:paste  [:prev-mo  ]:next-mo  q:quit
+─────────────────────────────────────────────────────────────
+  Thu 16 Jul 2026
+  a:edit  d:del  c:copy  v:paste  [ ]  n/p  /  g  t  q:quit
   code review with backend team
 ```
+
+Cells grow to fill the window, so a taller terminal shows more of each note.
+The key hints adapt to the terminal width.
 
 ## Requirements
 
 - Python 3.7+
 - A terminal with UTF-8 and 256-colour support (ncursesw)
-- Minimum terminal size: 43 columns × 21 rows
+- Minimum terminal size: 43 columns × 21 rows (22 rows to show every week of a
+  six-week month; below that the grid scrolls to keep the selected day in view)
 
 ## Installation
 
@@ -68,7 +78,7 @@ pycal
 
 #### Date input formats (`g`)
 
-`DD` · `DD/MM` · `DD.MM` · `DD/MM/YYYY` · `DD-MM-YYYY` · `YYYY-MM-DD`
+`DD` · `DD/MM` · `DD.MM` · `DD/MM/YYYY` · `DD-MM-YYYY` · `DD.MM.YYYY` · `YYYY-MM-DD` · `YYYY/MM/DD` · `YYYY.MM.DD`
 
 #### Editor controls
 
@@ -78,7 +88,7 @@ pycal
 | `Esc` | Save and close |
 | `Ctrl+G` | Discard changes |
 
-Notes are capped at 500 characters. A `·` marker appears on any day that has a note, including days from adjacent months shown in the grid.
+Notes are capped at 500 characters. The editor scrolls both ways, so notes longer or wider than the panel stay editable. A `·` marker appears on any day that has a note, including days from adjacent months shown in the grid.
 
 ## Notes storage
 
